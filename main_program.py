@@ -17,7 +17,6 @@ class Flight:
     departure_time: str
     capacity: int
     booked_seats: int = 0
-
     def __post_init__(self) -> None:
         if not self.flight_number.strip():
             raise ValueError("Flight number cannot be empty.")
@@ -26,7 +25,6 @@ class Flight:
         if not 0 <= self.booked_seats <= self.capacity:
             raise ValueError(
                 "Booked seats must be within the flight capacity.")
-
     @property
     def available_seats(self) -> int:
         """Return the number of seats that have not been booked."""
@@ -39,7 +37,6 @@ class Flight:
 
         self.booked_seats += 1
         return f"{self.flight_number}-{self.booked_seats:03d}"
-
 
 @dataclass(frozen=True)
 class Passenger:
@@ -63,11 +60,37 @@ class BookingRequest:
 @dataclass(frozen=True)
 class Booking:
     """A confirmed booking with its assigned seat."""
-
     booking_id: int
     passenger: Passenger
     flight_number: str
     seat_number: str
+
+
+class Stack:
+    """A stack that follows the Last In, First Out (LIFO) principle."""
+
+    def __init__(self) -> None:
+        self._items = []
+
+    def push(self, item: Booking) -> None:
+        """Add an item to the top of the stack."""
+        self._items.append(item)
+
+    def pop(self) -> Booking | None:
+        """Remove and return the most recently added item."""
+        if self.is_empty():
+            return None
+        return self._items.pop()
+
+    def peek(self) -> Booking | None:
+        """Return the top item without removing it."""
+        if self.is_empty():
+            return None
+        return self._items[-1]
+
+    def is_empty(self) -> bool:
+        """Check whether the stack has no items."""
+        return len(self._items) == 0
 
 
 class AirlineBookingSystem:
@@ -76,20 +99,19 @@ class AirlineBookingSystem:
     def __init__(self, flights: list[Flight]) -> None:
         if not flights:
             raise ValueError("At least one flight must be provided.")
-
         self._flights = {flight.flight_number: flight for flight in flights}
         if len(self._flights) != len(flights):
             raise ValueError("Flight numbers must be unique.")
 
         self._booking_queue: deque[BookingRequest] = deque()
         self._bookings: list[Booking] = []
+        self._booking_stack = Stack()
         self._booking_ids = count(1)
 
     @property
     def flights(self) -> tuple[Flight, ...]:
         """Return the available flights."""
         return tuple(self._flights.values())
-
     @property
     def pending_requests(self) -> tuple[BookingRequest, ...]:
         """Return queued requests in FIFO order."""
@@ -99,7 +121,6 @@ class AirlineBookingSystem:
     def bookings(self) -> tuple[Booking, ...]:
         """Return all confirmed bookings."""
         return tuple(self._bookings)
-
     def queue_booking(self, passenger_name: str, flight_number: str) -> None:
         """Add a valid booking request to the end of the FIFO queue."""
         flight_number = flight_number.strip().upper()
@@ -108,21 +129,18 @@ class AirlineBookingSystem:
 
         passenger = Passenger(passenger_name.strip())
         self._booking_queue.append(BookingRequest(passenger, flight_number))
-
     def process_booking_queue(self) -> list[str]:
         """Process every queued request in arrival order."""
         results = []
         while self._booking_queue:
             request = self._booking_queue.popleft()
             flight = self._flights[request.flight_number]
-
             if flight.available_seats == 0:
                 results.append(
                     f"Could not book {request.passenger.name} on "
                     f"{flight.flight_number}: the flight is fully booked."
                 )
                 continue
-
             seat_number = flight.reserve_seat()
             booking = Booking(
                 booking_id=next(self._booking_ids),
@@ -131,13 +149,26 @@ class AirlineBookingSystem:
                 seat_number=seat_number,
             )
             self._bookings.append(booking)
+            self._booking_stack.push(booking)
             results.append(
                 f"Confirmed booking #{booking.booking_id} for "
                 f"{booking.passenger.name} on {booking.flight_number}; "
                 f"seat {booking.seat_number}."
             )
-
         return results
+
+    def undo_last_booking(self) -> Booking | None:
+        """Undo the most recently confirmed booking using the stack."""
+        booking = self._booking_stack.pop()
+
+        if booking is None:
+            return None
+
+        self._bookings.remove(booking)
+        flight = self._flights[booking.flight_number]
+        flight.booked_seats -= 1
+
+        return booking
 
 
 def display_flights(system: AirlineBookingSystem) -> None:
@@ -151,7 +182,6 @@ def display_flights(system: AirlineBookingSystem) -> None:
             f"{flight.available_seats}/{flight.capacity} seats available"
         )
 
-
 def display_pending_requests(system: AirlineBookingSystem) -> None:
     """Print queued requests from first to last."""
     print("\nPending booking requests (FIFO)")
@@ -164,7 +194,6 @@ def display_pending_requests(system: AirlineBookingSystem) -> None:
             f"{position}. {request.passenger.name} - "
             f"{request.flight_number}"
         )
-
 
 def display_bookings(system: AirlineBookingSystem) -> None:
     """Print all confirmed bookings."""
@@ -182,7 +211,6 @@ def display_bookings(system: AirlineBookingSystem) -> None:
 
 class AirlineBookingApp:
     """Tkinter interface for the airline booking system."""
-
     def __init__(self, root: tk.Tk, system: AirlineBookingSystem) -> None:
         self.root = root
         self.system = system
@@ -197,7 +225,6 @@ class AirlineBookingApp:
         self._configure_styles()
         self._build_interface()
         self._refresh_tables()
-
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
         style.theme_use("clam")
@@ -255,14 +282,12 @@ class AirlineBookingApp:
         )
         style.map("Accent.TButton", background=[("active", "#0f568f")])
         style.configure("TButton", font=("Segoe UI", 9), padding=(10, 7))
-
     def _build_interface(self) -> None:
         container = ttk.Frame(self.root, style="App.TFrame", padding=24)
         container.pack(fill="both", expand=True)
         container.columnconfigure(0, weight=1)
         container.rowconfigure(2, weight=3)
         container.rowconfigure(3, weight=2)
-
         ttk.Label(
             container, text="Airline Booking Desk", style="Title.TLabel"
         ).grid(row=0, column=0, sticky="w")
@@ -272,7 +297,6 @@ class AirlineBookingApp:
         flight_card.grid(row=2, column=0, sticky="nsew", pady=(0, 14))
         flight_card.columnconfigure(0, weight=1)
         flight_card.rowconfigure(2, weight=1)
-
         ttk.Label(
             flight_card, text="Available flights", style="Section.TLabel"
         ).grid(row=0, column=0, sticky="w")
@@ -281,7 +305,6 @@ class AirlineBookingApp:
             text="Choose a flight, enter the passenger name, and add the request to the queue.",
             style="CardText.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(3, 10))
-
         self.flight_table = ttk.Treeview(
             flight_card,
             columns=("flight", "route", "departure", "seats"),
@@ -298,7 +321,6 @@ class AirlineBookingApp:
             self.flight_table.heading(column, text=title)
             self.flight_table.column(column, width=width, anchor="w")
         self.flight_table.grid(row=2, column=0, sticky="nsew")
-
         form = ttk.Frame(flight_card, style="Card.TFrame")
         form.grid(row=3, column=0, sticky="ew", pady=(12, 0))
         form.columnconfigure(1, weight=1)
@@ -314,13 +336,11 @@ class AirlineBookingApp:
             style="Accent.TButton",
             command=self._queue_booking,
         ).grid(row=0, column=2)
-
         lower = ttk.Frame(container, style="App.TFrame")
         lower.grid(row=3, column=0, sticky="nsew")
         lower.columnconfigure(0, weight=1)
         lower.columnconfigure(1, weight=1)
         lower.rowconfigure(0, weight=1)
-
         queue_card = ttk.Frame(lower, style="Card.TFrame", padding=16)
         queue_card.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
         queue_card.columnconfigure(0, weight=1)
@@ -353,7 +373,6 @@ class AirlineBookingApp:
             style="Accent.TButton",
             command=self._process_queue,
         ).grid(row=3, column=0, sticky="e", pady=(10, 0))
-
         bookings_card = ttk.Frame(lower, style="Card.TFrame", padding=16)
         bookings_card.grid(row=0, column=1, sticky="nsew", padx=(7, 0))
         bookings_card.columnconfigure(0, weight=1)
@@ -376,7 +395,11 @@ class AirlineBookingApp:
             self.booking_table.heading(column, text=title)
             self.booking_table.column(column, width=width, anchor="w")
         self.booking_table.grid(row=1, column=0, sticky="nsew")
-
+        ttk.Button(
+            bookings_card,
+            text="Undo Last Booking",
+            command=self._undo_last_booking,
+        ).grid(row=2, column=0, sticky="e", pady=(10, 0))
         ttk.Label(
             container, textvariable=self.status_text, style="Subtitle.TLabel"
         ).grid(row=4, column=0, sticky="w", pady=(12, 0))
@@ -384,7 +407,6 @@ class AirlineBookingApp:
     def _refresh_tables(self) -> None:
         for table in (self.flight_table, self.queue_table, self.booking_table):
             table.delete(*table.get_children())
-
         for flight in self.system.flights:
             self.flight_table.insert(
                 "",
@@ -397,7 +419,6 @@ class AirlineBookingApp:
                     f"{flight.available_seats}/{flight.capacity}",
                 ),
             )
-
         for position, request in enumerate(
             self.system.pending_requests, start=1
         ):
@@ -407,7 +428,6 @@ class AirlineBookingApp:
                 values=(position, request.passenger.name,
                         request.flight_number),
             )
-
         for booking in self.system.bookings:
             self.booking_table.insert(
                 "",
@@ -419,7 +439,6 @@ class AirlineBookingApp:
                     booking.seat_number,
                 ),
             )
-
     def _queue_booking(self, _event: tk.Event | None = None) -> None:
         selection = self.flight_table.selection()
         if not selection:
@@ -429,7 +448,6 @@ class AirlineBookingApp:
                 parent=self.root,
             )
             return
-
         try:
             self.system.queue_booking(
                 self.passenger_name.get(), selection[0]
@@ -444,7 +462,6 @@ class AirlineBookingApp:
         self._refresh_tables()
         self.status_text.set(
             "Booking request added to the end of the FIFO queue.")
-
     def _process_queue(self) -> None:
         results = self.system.process_booking_queue()
         self._refresh_tables()
@@ -461,6 +478,29 @@ class AirlineBookingApp:
             parent=self.root,
         )
 
+    def _undo_last_booking(self) -> None:
+        booking = self.system.undo_last_booking()
+        if booking is None:
+            self.status_text.set("There are no confirmed bookings to undo.")
+            messagebox.showinfo(
+                "Nothing to undo",
+                "There are no confirmed bookings to undo.",
+                parent=self.root,
+            )
+            return
+
+        self._refresh_tables()
+        self.status_text.set(
+            f"Undid booking #{booking.booking_id} for "
+            f"{booking.passenger.name}."
+        )
+        messagebox.showinfo(
+            "Booking undone",
+            f"Booking #{booking.booking_id} for "
+            f"{booking.passenger.name} has been undone.",
+            parent=self.root,
+        )
+
 
 def create_booking_system() -> AirlineBookingSystem:
     """Create the sample flights used by the application."""
@@ -471,7 +511,6 @@ def create_booking_system() -> AirlineBookingSystem:
             Flight("PH310", "Manila", "Puerto Princesa", "14:00", 80),
         ]
     )
-
 
 def main() -> None:
     """Launch the desktop airline booking interface."""
