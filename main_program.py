@@ -3,6 +3,8 @@
 from collections import deque
 from dataclasses import dataclass
 from itertools import count
+import json
+from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -17,6 +19,7 @@ class Flight:
     departure_time: str
     capacity: int
     booked_seats: int = 0
+
     def __post_init__(self) -> None:
         if not self.flight_number.strip():
             raise ValueError("Flight number cannot be empty.")
@@ -24,7 +27,9 @@ class Flight:
             raise ValueError("Flight capacity must be greater than zero.")
         if not 0 <= self.booked_seats <= self.capacity:
             raise ValueError(
-                "Booked seats must be within the flight capacity.")
+                "Booked seats must be within the flight capacity."
+            )
+
     @property
     def available_seats(self) -> int:
         """Return the number of seats that have not been booked."""
@@ -37,6 +42,7 @@ class Flight:
 
         self.booked_seats += 1
         return f"{self.flight_number}-{self.booked_seats:03d}"
+
 
 @dataclass(frozen=True)
 class Passenger:
@@ -60,6 +66,7 @@ class BookingRequest:
 @dataclass(frozen=True)
 class Booking:
     """A confirmed booking with its assigned seat."""
+
     booking_id: int
     passenger: Passenger
     flight_number: str
@@ -107,11 +114,13 @@ class AirlineBookingSystem:
         self._bookings: list[Booking] = []
         self._booking_stack = Stack()
         self._booking_ids = count(1)
+        self.load_from_json()
 
     @property
     def flights(self) -> tuple[Flight, ...]:
         """Return the available flights."""
         return tuple(self._flights.values())
+
     @property
     def pending_requests(self) -> tuple[BookingRequest, ...]:
         """Return queued requests in FIFO order."""
@@ -121,6 +130,48 @@ class AirlineBookingSystem:
     def bookings(self) -> tuple[Booking, ...]:
         """Return all confirmed bookings."""
         return tuple(self._bookings)
+
+    def save_to_json(self, filepath: str = "bookings.json") -> None:
+        """Save confirmed bookings to a JSON file."""
+        data = [
+            {
+                "booking_id": b.booking_id,
+                "passenger_name": b.passenger.name,
+                "flight_number": b.flight_number,
+                "seat_number": b.seat_number,
+            }
+            for b in self._bookings
+        ]
+        with open(filepath, "w") as file:
+            json.dump(data, file, indent=4)
+
+    def load_from_json(self, filepath: str = "bookings.json") -> None:
+        """Load confirmed bookings from a JSON file if it exists."""
+        path = Path(filepath)
+        if not path.exists():
+            return
+
+        with open(filepath, "r") as file:
+            data = json.load(file)
+
+        max_id = 0
+        for item in data:
+            flight = self._flights.get(item["flight_number"])
+            if flight and flight.available_seats > 0:
+                flight.booked_seats += 1
+                booking = Booking(
+                    booking_id=item["booking_id"],
+                    passenger=Passenger(item["passenger_name"]),
+                    flight_number=item["flight_number"],
+                    seat_number=item["seat_number"],
+                )
+                self._bookings.append(booking)
+                self._booking_stack.push(booking)
+                if item["booking_id"] > max_id:
+                    max_id = item["booking_id"]
+
+        self._booking_ids = count(max_id + 1)
+
     def queue_booking(self, passenger_name: str, flight_number: str) -> None:
         """Add a valid booking request to the end of the FIFO queue."""
         flight_number = flight_number.strip().upper()
@@ -129,6 +180,7 @@ class AirlineBookingSystem:
 
         passenger = Passenger(passenger_name.strip())
         self._booking_queue.append(BookingRequest(passenger, flight_number))
+
     def process_booking_queue(self) -> list[str]:
         """Process every queued request in arrival order."""
         results = []
@@ -155,6 +207,7 @@ class AirlineBookingSystem:
                 f"{booking.passenger.name} on {booking.flight_number}; "
                 f"seat {booking.seat_number}."
             )
+        self.save_to_json()
         return results
 
     def undo_last_booking(self) -> Booking | None:
@@ -168,6 +221,7 @@ class AirlineBookingSystem:
         flight = self._flights[booking.flight_number]
         flight.booked_seats -= 1
 
+        self.save_to_json()
         return booking
 
 
@@ -182,6 +236,7 @@ def display_flights(system: AirlineBookingSystem) -> None:
             f"{flight.available_seats}/{flight.capacity} seats available"
         )
 
+
 def display_pending_requests(system: AirlineBookingSystem) -> None:
     """Print queued requests from first to last."""
     print("\nPending booking requests (FIFO)")
@@ -194,6 +249,7 @@ def display_pending_requests(system: AirlineBookingSystem) -> None:
             f"{position}. {request.passenger.name} - "
             f"{request.flight_number}"
         )
+
 
 def display_bookings(system: AirlineBookingSystem) -> None:
     """Print all confirmed bookings."""
@@ -211,11 +267,13 @@ def display_bookings(system: AirlineBookingSystem) -> None:
 
 class AirlineBookingApp:
     """Tkinter interface for the airline booking system."""
+
     def __init__(self, root: tk.Tk, system: AirlineBookingSystem) -> None:
         self.root = root
         self.system = system
         self.status_text = tk.StringVar(
-            value="Select a flight to get started.")
+            value="Select a flight to get started."
+        )
 
         self.root.title("Airline Booking Desk")
         self.root.geometry("1080x760")
@@ -225,6 +283,7 @@ class AirlineBookingApp:
         self._configure_styles()
         self._build_interface()
         self._refresh_tables()
+
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
         style.theme_use("clam")
@@ -282,6 +341,7 @@ class AirlineBookingApp:
         )
         style.map("Accent.TButton", background=[("active", "#0f568f")])
         style.configure("TButton", font=("Segoe UI", 9), padding=(10, 7))
+
     def _build_interface(self) -> None:
         container = ttk.Frame(self.root, style="App.TFrame", padding=24)
         container.pack(fill="both", expand=True)
@@ -439,6 +499,7 @@ class AirlineBookingApp:
                     booking.seat_number,
                 ),
             )
+
     def _queue_booking(self, _event: tk.Event | None = None) -> None:
         selection = self.flight_table.selection()
         if not selection:
@@ -462,6 +523,7 @@ class AirlineBookingApp:
         self._refresh_tables()
         self.status_text.set(
             "Booking request added to the end of the FIFO queue.")
+
     def _process_queue(self) -> None:
         results = self.system.process_booking_queue()
         self._refresh_tables()
@@ -511,6 +573,7 @@ def create_booking_system() -> AirlineBookingSystem:
             Flight("PH310", "Manila", "Puerto Princesa", "14:00", 80),
         ]
     )
+
 
 def main() -> None:
     """Launch the desktop airline booking interface."""
