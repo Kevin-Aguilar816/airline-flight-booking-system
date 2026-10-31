@@ -524,6 +524,11 @@ Total Fare     : ₱{booking.fare:,.2f}
             f.write(ticket_str)
         return filename
 
+    def add_new_flight(self, flight_number: str, origin: str, destination: str, departure: str, capacity: int, price: float, duration: int) -> None:
+        new_flight = Flight(flight_number, origin, destination, departure, capacity, price, duration)
+        self._flight_bst.insert(new_flight)
+        self._flight_graph.add_route(origin, destination, flight_number, price, duration)
+
     def reset_system_data(self, filepath: str = "bookings.json") -> None:
         path = Path(filepath)
         if path.exists():
@@ -609,7 +614,7 @@ class SeatPickerWindow(tk.Toplevel):
         for r in range(1, rows + 1):
             ttk.Label(frame, text=f"Row {r}", font=("Segoe UI", 8)).grid(row=r, column=0, padx=5, pady=2)
             for c_idx, letter in enumerate(seat_letters, start=1):
-                col = c_idx if c_idx <= 2 else c_idx + 1
+                col = c_idx if c_idx <= 2 else c_idx + 1 # Leave aisle space
                 code = f"{r}{letter}"
                 is_occupied = code in flight.occupied_seats_set
 
@@ -706,8 +711,8 @@ class AirlineBookingApp:
         self.route_end = ttk.Entry(top_card, width=12)
         self.route_end.grid(row=0, column=4, sticky="w", padx=5)
 
-        ttk.Button(top_card, text="BFS Stops Path", command=self._search_bfs_route).grid(row=0, column=5, padx=2)
-        ttk.Button(top_card, text="Dijkstra Cheapest Path", command=self._search_dijkstra_route).grid(row=0, column=6, padx=2)
+        ttk.Button(top_card, text="Fewest Stops", command=self._search_bfs_route).grid(row=0, column=5, padx=2)
+        ttk.Button(top_card, text="Cheapest Route", command=self._search_dijkstra_route).grid(row=0, column=6, padx=2)
 
         # Flight Catalog Table (BST + QuickSort)
         flight_card = ttk.Frame(container, style="Card.TFrame", padding=12)
