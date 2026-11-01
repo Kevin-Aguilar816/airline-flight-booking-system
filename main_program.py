@@ -2,6 +2,7 @@
 1. Array / List (Flight catalog & tabular UI rendering)
 2. Stack (LIFO for booking undo operations)
 3. Queue & Priority Queue / Max Heap (VIP / Business / Economy priority request handling)
+   + FIFO Waitlist Queues (deque) for seat conflicts and full flights
 4. Singly Linked List (Node-based storage for confirmed bookings)
 5. Binary Search Tree / BST (O(log n) flight lookup by flight number)
 6. Weighted Graph & Dijkstra's Algorithm (Adjacency List with BFS and Dijkstra shortest path)
@@ -128,6 +129,13 @@ class Stack:
         if self.is_empty():
             return None
         return self._items.pop()
+
+    def remove(self, item: Booking) -> bool:
+        """Remove a specific booking from anywhere in the stack (used when cancelling)."""
+        if item in self._items:
+            self._items.remove(item)
+            return True
+        return False
 
     def is_empty(self) -> bool:
         return len(self._items) == 0
@@ -340,6 +348,71 @@ class PriorityBookingQueue:
 
 
 # ============================================================================
+# 6b. WAITLIST (FIFO QUEUES)
+# ============================================================================
+
+class WaitlistManager:
+    """FIFO queues (deque) keyed by (flight_number, seat). Seat 'ANY' = flight is full."""
+    def __init__(self) -> None:
+        self._lists: dict[tuple[str, str], deque[BookingRequest]] = {}
+
+    def add(self, req: BookingRequest, seat: str | None = None) -> int:
+        """Add a request to the waitlist. Returns the position in line (1-based)."""
+        key = (req.flight_number, seat or "ANY")
+        q = self._lists.setdefault(key, deque())
+        q.append(req)
+        return len(q)
+
+    def pop_for_seat(self, flight_number: str, seat: str) -> BookingRequest | None:
+        """Specific-seat waiters get priority, then the general flight waitlist."""
+        for key in ((flight_number, seat), (flight_number, "ANY")):
+            q = self._lists.get(key)
+            if q:
+                return q.popleft()
+        return None
+
+    def entries(self) -> list[tuple[str, str, int, BookingRequest]]:
+        rows = []
+        for (flight, seat), q in self._lists.items():
+            for pos, req in enumerate(q, start=1):
+                rows.append((flight, seat, pos, req))
+        return rows
+
+    def clear(self) -> None:
+        self._lists.clear()
+
+    def to_dicts(self) -> list[dict]:
+        """Serialize every waitlisted request (in FIFO order per queue) for JSON."""
+        return [
+            {
+                "flight_number": flight,
+                "waitlist_seat": seat,  # specific seat code, or "ANY" for a full flight
+                "request_id": req.request_id,
+                "passenger_name": req.passenger.name,
+                "ticket_class": req.passenger.ticket_class,
+                "requested_seat": req.requested_seat,
+            }
+            for flight, seat, _pos, req in self.entries()
+        ]
+
+    def restore(self, items: list[dict]) -> None:
+        """Rebuild the queues from saved JSON, preserving the original FIFO order."""
+        self.clear()
+        for item in items:
+            passenger = Passenger(item["passenger_name"], item.get("ticket_class", "Economy"))
+            score = PriorityBookingQueue.TIER_SCORES.get(passenger.ticket_class, 10)
+            req = BookingRequest(
+                priority_score=-score,
+                request_id=item.get("request_id", 0),
+                passenger=passenger,
+                flight_number=item["flight_number"],
+                requested_seat=item.get("requested_seat"),
+            )
+            seat = item.get("waitlist_seat", "ANY")
+            self.add(req, None if seat == "ANY" else seat)
+
+
+# ============================================================================
 # 7. MANUAL QUICKSORT ALGORITHM
 # ============================================================================
 
@@ -410,6 +483,7 @@ class AirlineBookingSystem:
             )
 
         self._priority_queue = PriorityBookingQueue()
+        self._waitlist = WaitlistManager()
         self._bookings_linked_list = SinglyLinkedList()
         self._booking_stack = Stack()
         self._hash_table = HashTable()
@@ -427,6 +501,10 @@ class AirlineBookingSystem:
     @property
     def bookings(self) -> list[Booking]:
         return self._bookings_linked_list.to_list()
+
+    @property
+    def waitlist_entries(self) -> list[tuple[str, str, int, BookingRequest]]:
+        return self._waitlist.entries()
 
     def search_flight_bst(self, flight_number: str) -> Flight | None:
         return self._flight_bst.search(flight_number)
@@ -456,49 +534,88 @@ class AirlineBookingSystem:
         passenger = Passenger(passenger_name.strip(), ticket_class)
         self._priority_queue.enqueue(passenger, flight_number, specific_seat)
 
+    def _confirm_booking(self, req: BookingRequest, flight: Flight, seat_code: str) -> Booking:
+        """Shared code path: create a Booking and register it in every structure."""
+        booking = Booking(
+            booking_id=next(self._booking_ids),
+            passenger=req.passenger,
+            flight_number=flight.flight_number,
+            seat_number=seat_code,
+            fare=flight.price,
+        )
+        self._bookings_linked_list.append(booking)
+        self._booking_stack.push(booking)
+        self._hash_table.put(req.passenger.name, booking)
+        return booking
+
     def process_booking_queue(self) -> list[str]:
         results = []
         while not self._priority_queue.is_empty():
             req = self._priority_queue.dequeue()
             flight = self.search_flight_bst(req.flight_number)
-            if not flight or flight.available_seats == 0:
-                results.append(f"Could not book {req.passenger.name} on {req.flight_number}: Flight full.")
+            if not flight:
+                results.append(f"Unknown flight {req.flight_number} for {req.passenger.name}.")
                 continue
 
-            try:
-                seat_code = flight.reserve_seat(req.requested_seat)
-            except ValueError as err:
-                results.append(f"Booking error for {req.passenger.name}: {err}")
+            seat_taken = bool(req.requested_seat) and req.requested_seat in flight.occupied_seats_set
+            if flight.available_seats == 0 or seat_taken:
+                # Seat conflict or full flight -> FIFO waitlist instead of failing
+                position = self._waitlist.add(req, req.requested_seat if seat_taken else None)
+                reason = f"seat {req.requested_seat} taken" if seat_taken else "flight full"
+                results.append(
+                    f"[WAITLIST] {req.passenger.name} on {req.flight_number} "
+                    f"({reason}) - position #{position}"
+                )
                 continue
 
-            booking = Booking(
-                booking_id=next(self._booking_ids),
-                passenger=req.passenger,
-                flight_number=flight.flight_number,
-                seat_number=seat_code,
-                fare=flight.price
+            seat_code = flight.reserve_seat(req.requested_seat)
+            booking = self._confirm_booking(req, flight, seat_code)
+            results.append(
+                f"[{req.passenger.ticket_class}] Confirmed #{booking.booking_id} for "
+                f"{booking.passenger.name} ({booking.flight_number}, Seat {seat_code}, ₱{booking.fare:,.2f})"
             )
-            self._bookings_linked_list.append(booking)
-            self._booking_stack.push(booking)
-            self._hash_table.put(req.passenger.name, booking)
-            results.append(f"[{req.passenger.ticket_class}] Confirmed #{booking.booking_id} for {booking.passenger.name} ({booking.flight_number}, Seat {seat_code}, ₱{booking.fare:,.2f})")
 
         self.save_to_json()
         return results
 
-    def undo_last_booking(self) -> Booking | None:
-        booking = self._booking_stack.pop()
-        if booking is None:
-            return None
-
+    def _release_booking(self, booking: Booking) -> list[str]:
+        """Remove a booking from every structure, free the seat, and promote the waitlist."""
         self._bookings_linked_list.remove(booking)
+        self._booking_stack.remove(booking)
         self._hash_table.remove(booking)
+
+        notes: list[str] = []
         flight = self.search_flight_bst(booking.flight_number)
         if flight:
             flight.release_seat(booking.seat_number)
+            next_req = self._waitlist.pop_for_seat(flight.flight_number, booking.seat_number)
+            if next_req:
+                seat = flight.reserve_seat(booking.seat_number)
+                new_booking = self._confirm_booking(next_req, flight, seat)
+                notes.append(
+                    f"Waitlist promoted: {new_booking.passenger.name} -> "
+                    f"#{new_booking.booking_id} (Seat {new_booking.seat_number})"
+                )
+
+        # Invalidate the boarding pass file of the cancelled booking
+        ticket = Path(f"e_ticket_booking_{booking.booking_id}.txt")
+        if ticket.exists():
+            ticket.unlink()
 
         self.save_to_json()
-        return booking
+        return notes
+
+    def undo_last_booking(self) -> tuple[Booking, list[str]] | None:
+        booking = self._booking_stack.pop()
+        if booking is None:
+            return None
+        return booking, self._release_booking(booking)
+
+    def cancel_booking(self, booking_id: int) -> tuple[Booking, list[str]] | None:
+        booking = next((b for b in self.bookings if b.booking_id == booking_id), None)
+        if booking is None:
+            return None
+        return booking, self._release_booking(booking)
 
     def generate_e_ticket(self, booking: Booking) -> str:
         flight = self.search_flight_bst(booking.flight_number)
@@ -537,23 +654,27 @@ Total Fare     : ₱{booking.fare:,.2f}
         self._booking_stack = Stack()
         self._hash_table = HashTable()
         self._priority_queue = PriorityBookingQueue()
+        self._waitlist.clear()
         self._booking_ids = count(1)
         for f in self.flights:
             f.booked_seats = 0
             f.occupied_seats_set.clear()
 
     def save_to_json(self, filepath: str = "bookings.json") -> None:
-        data = [
-            {
-                "booking_id": b.booking_id,
-                "passenger_name": b.passenger.name,
-                "ticket_class": b.passenger.ticket_class,
-                "flight_number": b.flight_number,
-                "seat_number": b.seat_number,
-                "fare": b.fare
-            }
-            for b in self.bookings
-        ]
+        data = {
+            "bookings": [
+                {
+                    "booking_id": b.booking_id,
+                    "passenger_name": b.passenger.name,
+                    "ticket_class": b.passenger.ticket_class,
+                    "flight_number": b.flight_number,
+                    "seat_number": b.seat_number,
+                    "fare": b.fare
+                }
+                for b in self.bookings
+            ],
+            "waitlist": self._waitlist.to_dicts(),
+        }
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
 
@@ -563,10 +684,17 @@ Total Fare     : ₱{booking.fare:,.2f}
             return
 
         with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            raw = json.load(f)
+
+        # Backward compatible: the old format was a plain list of bookings.
+        if isinstance(raw, list):
+            booking_items, waitlist_items = raw, []
+        else:
+            booking_items = raw.get("bookings", [])
+            waitlist_items = raw.get("waitlist", [])
 
         max_id = 0
-        for item in data:
+        for item in booking_items:
             flight = self.search_flight_bst(item["flight_number"])
             if flight and flight.available_seats > 0:
                 seat_num = item.get("seat_number", "1A")
@@ -585,6 +713,10 @@ Total Fare     : ₱{booking.fare:,.2f}
                     max_id = item["booking_id"]
 
         self._booking_ids = count(max_id + 1)
+
+        # Only restore waitlist entries for flights that still exist
+        valid_waitlist = [w for w in waitlist_items if self.search_flight_bst(w["flight_number"])]
+        self._waitlist.restore(valid_waitlist)
 
 
 # ============================================================================
@@ -685,7 +817,7 @@ class AirlineBookingApp:
         header_frame.columnconfigure(0, weight=1)
 
         ttk.Label(header_frame, text="Airline Booking System", style="Title.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header_frame, text="Techniques: Array | Stack | Priority Queue (Heap) | Linked List | BST | Graph (BFS/Dijkstra) | QuickSort | Hash Table | Seat Map | E-Ticket", style="Subtitle.TLabel").grid(row=1, column=0, sticky="w")
+        ttk.Label(header_frame, text="Techniques: Array | Stack | Priority Queue (Heap) + Waitlist (FIFO) | Linked List | BST | Graph (BFS/Dijkstra) | QuickSort | Hash Table | Seat Map | E-Ticket", style="Subtitle.TLabel").grid(row=1, column=0, sticky="w")
 
         # Admin Mode Toggle
         ttk.Checkbutton(
@@ -781,7 +913,10 @@ class AirlineBookingApp:
             self.queue_table.column(col, width=w, anchor="w")
         self.queue_table.grid(row=1, column=0, sticky="nsew", pady=(5, 5))
 
-        ttk.Button(queue_card, text="Process Highest Priority Queue", style="Accent.TButton", command=self._process_queue).grid(row=2, column=0, sticky="e")
+        queue_btn_bar = ttk.Frame(queue_card, style="Card.TFrame")
+        queue_btn_bar.grid(row=2, column=0, sticky="ew")
+        ttk.Button(queue_btn_bar, text="View Waitlist", command=self._show_waitlist).pack(side="left", padx=2)
+        ttk.Button(queue_btn_bar, text="Process Highest Priority Queue", style="Accent.TButton", command=self._process_queue).pack(side="right", padx=2)
 
         # Bookings Card (Singly Linked List & Hash Table)
         bookings_card = ttk.Frame(lower, style="Card.TFrame", padding=12)
@@ -799,6 +934,7 @@ class AirlineBookingApp:
         btn_bar.grid(row=2, column=0, sticky="ew")
 
         ttk.Button(btn_bar, text="Print Boarding Pass E-Ticket", command=self._print_e_ticket).pack(side="left", padx=2)
+        ttk.Button(btn_bar, text="Cancel Selected Booking", command=self._cancel_selected_booking).pack(side="left", padx=2)
         ttk.Button(btn_bar, text="Undo Booking (LIFO Stack)", command=self._undo_last_booking).pack(side="right", padx=2)
 
         # Admin Panel Card
@@ -955,13 +1091,48 @@ class AirlineBookingApp:
         messagebox.showinfo("Priority Queue Processed", "\n".join(results))
 
     def _undo_last_booking(self) -> None:
-        booking = self.system.undo_last_booking()
-        if not booking:
+        result = self.system.undo_last_booking()
+        if not result:
             messagebox.showinfo("Undo", "No confirmed bookings in stack to undo.")
             return
+        booking, notes = result
         self._refresh_tables()
         self.status_text.set(f"Popped booking #{booking.booking_id} ({booking.passenger.name}) from LIFO Stack.")
-        messagebox.showinfo("Booking Undone", f"Undone booking #{booking.booking_id} for {booking.passenger.name}.")
+        extra = ("\n\n" + "\n".join(notes)) if notes else ""
+        messagebox.showinfo("Booking Undone", f"Undone booking #{booking.booking_id} for {booking.passenger.name}.{extra}")
+
+    def _cancel_selected_booking(self) -> None:
+        selection = self.booking_table.selection()
+        if not selection:
+            messagebox.showwarning("Cancel", "Select a confirmed booking from the table.")
+            return
+        booking_id = int(self.booking_table.item(selection[0], "values")[0])
+        if not messagebox.askyesno("Confirm Cancel", f"Cancel booking #{booking_id}? This cannot be undone."):
+            return
+
+        result = self.system.cancel_booking(booking_id)
+        if not result:
+            return
+        booking, notes = result
+        self._refresh_tables()
+        self.status_text.set(f"Cancelled booking #{booking.booking_id} ({booking.passenger.name}).")
+        extra = ("\n\n" + "\n".join(notes)) if notes else ""
+        messagebox.showinfo(
+            "Booking Cancelled",
+            f"Booking #{booking.booking_id} cancelled. Seat {booking.seat_number} released.{extra}"
+        )
+
+    def _show_waitlist(self) -> None:
+        entries = self.system.waitlist_entries
+        if not entries:
+            messagebox.showinfo("Waitlist", "No one is on the waitlist.")
+            return
+        lines = [
+            f"{flight} | {'Any seat' if seat == 'ANY' else 'Seat ' + seat} | "
+            f"#{pos} {req.passenger.name} ({req.passenger.ticket_class})"
+            for flight, seat, pos, req in entries
+        ]
+        messagebox.showinfo("Waitlist (FIFO Queues)", "\n".join(lines))
 
     def _print_e_ticket(self) -> None:
         selection = self.booking_table.selection()
