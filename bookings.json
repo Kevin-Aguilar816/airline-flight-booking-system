@@ -1,0 +1,172 @@
+{
+    "bookings": [
+        {
+            "booking_id": 1,
+            "passenger_name": "pepe",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "1A",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 2,
+            "passenger_name": "a",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "1B",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 3,
+            "passenger_name": "d",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "1C",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 4,
+            "passenger_name": "sd",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "1D",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 5,
+            "passenger_name": "s",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "2A",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 6,
+            "passenger_name": "d",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "2B",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 7,
+            "passenger_name": "f",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "2D",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 8,
+            "passenger_name": "g",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "3A",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 9,
+            "passenger_name": "d",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "2C",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 10,
+            "passenger_name": "f",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "3B",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 11,
+            "passenger_name": "dgg",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "3C",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 12,
+            "passenger_name": "asd",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "3D",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 13,
+            "passenger_name": "asd ds",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "4A",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 14,
+            "passenger_name": "fasd",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "4B",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 15,
+            "passenger_name": "ffas",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "4C",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 16,
+            "passenger_name": "asdsa",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "4D",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 17,
+            "passenger_name": "asfsfa",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "5A",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 18,
+            "passenger_name": "fasgag",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "5B",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 19,
+            "passenger_name": "asdasfg",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "5C",
+            "fare": 2500.0
+        },
+        {
+            "booking_id": 20,
+            "passenger_name": "asgagasga",
+            "ticket_class": "Economy",
+            "flight_number": "PH101",
+            "seat_number": "5D",
+            "fare": 2500.0
+        }
+    ],
+    "waitlist": [
+        {
+            "flight_number": "PH101",
+            "request_id": 21,
+            "passenger_name": "fuckyou",
+            "ticket_class": "Economy"
+        }
+    ]
+}
