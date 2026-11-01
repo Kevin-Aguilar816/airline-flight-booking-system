@@ -101,6 +101,7 @@ class BookingRequest:
     passenger: Passenger = field(compare=False)
     flight_number: str = field(compare=False)
     requested_seat: str | None = field(default=None, compare=False)
+    waitlist_ok: bool = field(default=False, compare=False)  # passenger agreed to join the waitlist
 
 
 @dataclass(frozen=True)
@@ -322,7 +323,7 @@ class PriorityBookingQueue:
         self._heap: list[BookingRequest] = []
         self._counter = count(1)
 
-    def enqueue(self, passenger: Passenger, flight_number: str, requested_seat: str | None = None) -> BookingRequest:
+    def enqueue(self, passenger: Passenger, flight_number: str, requested_seat: str | None = None, waitlist_ok: bool = False) -> BookingRequest:
         tier_score = self.TIER_SCORES.get(passenger.ticket_class, 10)
         req_id = next(self._counter)
         req = BookingRequest(
@@ -330,7 +331,8 @@ class PriorityBookingQueue:
             request_id=req_id,
             passenger=passenger,
             flight_number=flight_number,
-            requested_seat=requested_seat
+            requested_seat=requested_seat,
+            waitlist_ok=waitlist_ok
         )
         heapq.heappush(self._heap, req)
         return req
@@ -400,6 +402,7 @@ class WaitlistManager:
                 request_id=item.get("request_id", 0),
                 passenger=passenger,
                 flight_number=item["flight_number"],
+                waitlist_ok=True,
             ))
 
 
@@ -518,14 +521,26 @@ class AirlineBookingSystem:
     def search_passenger_hash(self, passenger_name: str) -> list[Booking]:
         return self._hash_table.get(passenger_name)
 
-    def enqueue_booking(self, passenger_name: str, flight_number: str, ticket_class: str = "Economy", specific_seat: str | None = None) -> None:
+    def is_flight_full_for_new_request(self, flight_number: str) -> bool:
+        """True if no seat would be left for a new request, counting requests already pending."""
+        flight = self.search_flight_bst(flight_number)
+        if not flight:
+            return False
+        pending = sum(
+            1 for r in self.pending_requests
+            if r.flight_number.strip().upper() == flight.flight_number
+        )
+        return flight.available_seats - pending <= 0
+
+    def enqueue_booking(self, passenger_name: str, flight_number: str, ticket_class: str = "Economy",
+                        specific_seat: str | None = None, waitlist_ok: bool = False) -> None:
         flight = self.search_flight_bst(flight_number)
         if not flight:
             raise ValueError(f"Unknown flight number: {flight_number}")
         if specific_seat and specific_seat in flight.occupied_seats_set:
             raise ValueError(f"Seat {specific_seat} is already taken on {flight.flight_number}. Please pick another seat.")
         passenger = Passenger(passenger_name.strip(), ticket_class)
-        self._priority_queue.enqueue(passenger, flight_number, specific_seat)
+        self._priority_queue.enqueue(passenger, flight_number, specific_seat, waitlist_ok)
 
     def _confirm_booking(self, req: BookingRequest, flight: Flight, seat_code: str) -> Booking:
         """Shared code path: create a Booking and register it in every structure."""
@@ -551,12 +566,19 @@ class AirlineBookingSystem:
                 continue
 
             if flight.available_seats == 0:
-                # Flight is full -> join this flight's FIFO waitlist
-                position = self._waitlist.add(req)
-                results.append(
-                    f"[WAITLIST] {req.passenger.name} on {req.flight_number} "
-                    f"(flight full) - position #{position}"
-                )
+                if req.waitlist_ok:
+                    # Flight is full and the passenger agreed -> join this flight's FIFO waitlist
+                    position = self._waitlist.add(req)
+                    results.append(
+                        f"[WAITLIST] {req.passenger.name} on {req.flight_number} "
+                        f"(flight full) - position #{position}"
+                    )
+                else:
+                    # Flight filled up after this request was made and no waitlist consent was given
+                    results.append(
+                        f"[NOT BOOKED] {req.passenger.name} on {req.flight_number}: flight filled up "
+                        f"and passenger did not agree to the waitlist. Please book a different flight."
+                    )
                 continue
 
             # If two pending requests wanted the same seat, the later one gets the next free seat
@@ -1067,9 +1089,30 @@ class AirlineBookingApp:
         tier = self.class_tier.get()
         seat_raw = self.selected_seat_code.get().replace("Seat: ", "").strip()
         seat_code = seat_raw if seat_raw else None
+        flight_no = selection[0]
+
+        # Full flight -> ask the passenger: join the waitlist, or choose another flight
+        waitlist_ok = False
+        if self.system.is_flight_full_for_new_request(flight_no):
+            join = messagebox.askyesno(
+                "Flight Full",
+                f"Flight {flight_no} is fully booked.\n\n"
+                f"Do you want to join the waitlist? You will be booked automatically "
+                f"if a seat becomes available.\n\n"
+                f"Yes  =  Join the waitlist\n"
+                f"No   =  Choose a different flight"
+            )
+            if not join:
+                self.selected_seat_code.set("")
+                self.status_text.set(
+                    f"Flight {flight_no} is full. Waitlist declined - please select a different flight."
+                )
+                return
+            waitlist_ok = True
+            seat_code = None  # a specific seat is meaningless on a full flight
 
         try:
-            self.system.enqueue_booking(pass_name, selection[0], tier, seat_code)
+            self.system.enqueue_booking(pass_name, flight_no, tier, seat_code, waitlist_ok)
         except ValueError as err:
             messagebox.showerror("Queue Error", str(err))
             return
@@ -1077,7 +1120,10 @@ class AirlineBookingApp:
         self.passenger_name.delete(0, "end")
         self.selected_seat_code.set("")
         self._refresh_tables()
-        self.status_text.set(f"Enqueued {pass_name} ({tier} Class) in Priority Max Heap.")
+        if waitlist_ok:
+            self.status_text.set(f"Enqueued {pass_name} ({tier} Class) - will be waitlisted on {flight_no} when processed.")
+        else:
+            self.status_text.set(f"Enqueued {pass_name} ({tier} Class) in Priority Max Heap.")
 
     def _process_queue(self) -> None:
         results = self.system.process_booking_queue()
